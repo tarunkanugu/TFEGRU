@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>TFEGRU – Cloud Workload Prediction</title>
+<link rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css"/>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
+<style>
+  :root{--pri:#4a6fa5;--acc:#47b8a4;}
+  body{background:#f0f4f8;font-family:'Segoe UI',sans-serif;}
+  .navbar{background:var(--pri)!important;}
+  .navbar-brand{font-weight:700;color:#fff!important;font-size:1.1rem;}
+  .badge-ds{background:#fff;color:#333;font-size:.75rem;padding:4px 10px;border-radius:20px;}
+  .card{border:none;border-radius:12px;box-shadow:0 2px 12px rgba(0,0,0,.08);}
+  .metric-box{background:#fff;border-radius:10px;padding:18px 24px;
+              box-shadow:0 1px 6px rgba(0,0,0,.07);text-align:center;}
+  .metric-val{font-size:1.9rem;font-weight:700;color:var(--pri);}
+  .metric-lbl{font-size:.72rem;color:#888;text-transform:uppercase;letter-spacing:.7px;}
+  #logbox{background:#1e1e2e;color:#a6e3a1;font-size:.81rem;font-family:monospace;
+          border-radius:8px;padding:14px;max-height:160px;overflow-y:auto;}
+  .btn-train{background:var(--pri);border-color:var(--pri);color:#fff;}
+  .btn-train:hover{background:#3a5f95;border-color:#3a5f95;color:#fff;}
+  .btn-pred{background:var(--acc);border-color:var(--acc);color:#fff;}
+  .btn-pred:hover{background:#37a894;border-color:#37a894;color:#fff;}
+  canvas{max-height:270px;}
+  .spinner-border-sm{width:1rem;height:1rem;border-width:.15em;}
+</style>
+</head>
+<body>
+
+<nav class="navbar mb-4">
+  <div class="container-fluid">
+    <span class="navbar-brand">⚡ TFEGRU – Cloud Workload Prediction</span>
+    <span class="badge-ds">Alibaba Cloud Dataset (Synthetic)</span>
+  </div>
+</nav>
+
+<div class="container-fluid px-4">
+<div class="row g-4">
+
+  <!-- ══ LEFT PANEL ══ -->
+  <div class="col-lg-3">
+
+    <div class="card p-3 mb-3">
+      <h6 class="fw-bold mb-3">🧠 Model Selection</h6>
+      <label class="form-label small fw-semibold">Model</label>
+      <select id="selModel" class="form-select form-select-sm mb-3">
+        {% for m in models %}
+        <option value="{{ m }}">{{ m }}</option>
+        {% endfor %}
+      </select>
+      <label class="form-label small fw-semibold">Epochs: <span id="epochLbl">15</span></label>
+      <input type="range" id="epochSlider" class="form-range mb-3"
+             min="5" max="40" value="15"
+             oninput="document.getElementById('epochLbl').textContent=this.value"/>
+      <button id="btnTrain" class="btn btn-train btn-sm w-100" onclick="trainModel()">
+        ▶ Train Model
+      </button>
+    </div>
+
+    <div class="card p-3 mb-3">
+      <h6 class="fw-bold mb-3">🔮 Prediction</h6>
+      <label class="form-label small fw-semibold">Steps: <span id="stepLbl">50</span></label>
+      <input type="range" id="stepSlider" class="form-range mb-3"
+             min="10" max="200" value="50"
+             oninput="document.getElementById('stepLbl').textContent=this.value"/>
+      <button id="btnPredict" class="btn btn-pred btn-sm w-100" onclick="runPredict()">
+        📈 Predict
+      </button>
+    </div>
+
+    <div class="card p-3">
+      <h6 class="fw-bold mb-3">📦 Dataset</h6>
+      <div id="dsInfo" class="small text-muted">Loading…</div>
+      <hr class="my-2"/>
+      <button class="btn btn-outline-secondary btn-sm w-100" onclick="compareAll()">
+        📊 Compare All Trained
+      </button>
+    </div>
+
+  </div><!-- /left -->
+
+  <!-- ══ MAIN PANEL ══ -->
+  <div class="col-lg-9">
+
+    <!-- Metrics -->
+    <div class="row g-3 mb-3">
+      <div class="col-4"><div class="metric-box">
+        <div class="metric-val" id="vMSE">—</div>
+        <div class="metric-lbl">MSE</div>
+      </div></div>
+      <div class="col-4"><div class="metric-box">
+        <div class="metric-val" id="vMAE">—</div>
+        <div class="metric-lbl">MAE</div>
+      </div></div>
+      <div class="col-4"><div class="metric-box">
+        <div class="metric-val" id="vRMSE">—</div>
+        <div class="metric-lbl">RMSE</div>
+      </div></div>
+    </div>
+
+    <!-- Loss + MAE charts -->
+    <div class="row g-3 mb-3">
+      <div class="col-md-6">
+        <div class="card p-3">
+          <h6 class="fw-bold">Training Loss</h6>
+          <canvas id="lossChart"></canvas>
+        </div>
+      </div>
+      <div class="col-md-6">
+        <div class="card p-3">
+          <h6 class="fw-bold">MAE per Epoch</h6>
+          <canvas id="maeChart"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <!-- Pred vs Actual + Comparison -->
+    <div class="row g-3 mb-3">
+      <div class="col-md-8">
+        <div class="card p-3">
+          <h6 class="fw-bold">Prediction vs Actual</h6>
+          <canvas id="predChart"></canvas>
+        </div>
+      </div>
+      <div class="col-md-4">
+        <div class="card p-3">
+          <h6 class="fw-bold">Model Comparison (MSE)</h6>
+          <canvas id="cmpChart"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <!-- Log -->
+    <div class="card p-3">
+      <h6 class="fw-bold">📋 Log</h6>
+      <div id="logbox">Waiting for actions…</div>
+    </div>
+
+  </div><!-- /main -->
+</div>
+</div>
+
+<script>
+// ── helpers ────────────────────────────────────────────────
+const $ = id => document.getElementById(id);
+
+function log(msg) {
+  const box = $('logbox');
+  const t   = new Date().toLocaleTimeString();
+  box.innerHTML += `<div>[${t}] ${msg}</div>`;
+  box.scrollTop = box.scrollHeight;
+}
+
+let charts = {};
+
+function makeChart(id, type, labels, datasets, extraOpts) {
+  if (charts[id]) { charts[id].destroy(); }
+  const opts = {
+    responsive: true,
+    plugins: { legend: { position: 'top', labels: { boxWidth: 12, font: { size: 11 } } } },
+    scales: type === 'line' ? {
+      x: { ticks: { maxTicksLimit: 8 } },
+      y: { beginAtZero: false }
+    } : { y: { beginAtZero: true } },
+    ...extraOpts
+  };
+  charts[id] = new Chart($(id).getContext('2d'), { type, data: { labels, datasets }, options: opts });
+}
+
+// ── dataset info ───────────────────────────────────────────
+async function loadDatasetInfo() {
+  try {
+    const r = await fetch('/api/dataset_info');
+    const d = await r.json();
+    $('dsInfo').innerHTML =
+      `<b>Samples:</b> ${d.n_samples}<br>` +
+      `<b>Train:</b> ${d.n_train} | <b>Val:</b> ${d.n_val} | <b>Test:</b> ${d.n_test}<br>` +
+      `<b>Seq Len:</b> ${d.seq_len}<br>` +
+      `<b>Features:</b> ${d.features.join(', ')}`;
+  } catch(e) {
+    $('dsInfo').textContent = 'Error loading dataset info.';
+  }
+}
+
+// ── train ──────────────────────────────────────────────────
+async function trainModel() {
+  const model  = $('selModel').value;
+  const epochs = parseInt($('epochSlider').value);
+  const btn    = $('btnTrain');
+
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Training…';
+  log(`Training <b>${model}</b> for up to ${epochs} epochs…`);
+
+  try {
+    const res = await fetch('/api/train', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model, epochs })
+    });
+    const d = await res.json();
+
+    if (d.error) {
+      log(`❌ ${d.error}`);
+      return;
+    }
+
+    // metrics
+    $('vMSE').textContent  = d.metrics.MSE;
+    $('vMAE').textContent  = d.metrics.MAE;
+    $('vRMSE').textContent = d.metrics.RMSE;
+
+    log(`✅ <b>${model}</b> done | ${d.epochs_run} epochs | ${d.training_time}s | MSE=${d.metrics.MSE} MAE=${d.metrics.MAE}`);
+
+    const labels = d.train_loss.map((_, i) => i + 1);
+
+    makeChart('lossChart', 'line', labels, [
+      { label: 'Train Loss', data: d.train_loss, borderColor: '#4a6fa5',
+        tension: .3, pointRadius: 2, fill: false },
+      { label: 'Val Loss',   data: d.val_loss,   borderColor: '#e07b54',
+        tension: .3, pointRadius: 2, fill: false }
+    ]);
+
+    makeChart('maeChart', 'line', labels, [
+      { label: 'Train MAE', data: d.train_mae, borderColor: '#47b8a4',
+        tension: .3, pointRadius: 2, fill: false },
+      { label: 'Val MAE',   data: d.val_mae,   borderColor: '#c97dbd',
+        tension: .3, pointRadius: 2, fill: false }
+    ]);
+
+  } catch(e) {
+    log(`❌ Network error: ${e.message}`);
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '▶ Train Model';
+  }
+}
+
+// ── predict ────────────────────────────────────────────────
+async function runPredict() {
+  const model = $('selModel').value;
+  const steps = parseInt($('stepSlider').value);
+  const btn   = $('btnPredict');
+
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Predicting…';
+  log(`Predicting ${steps} steps with <b>${model}</b>…`);
+
+  try {
+    const res = await fetch('/api/predict', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model, steps })
+    });
+    const d = await res.json();
+
+    if (d.error) {
+      log(`❌ ${d.error}`);
+      return;
+    }
+
+    const labels = Array.from({ length: steps }, (_, i) => i + 1);
+    makeChart('predChart', 'line', labels, [
+      { label: 'Predicted', data: d.predictions, borderColor: '#4a6fa5',
+        tension: .3, pointRadius: 0, fill: false },
+      { label: 'Actual',    data: d.actuals,     borderColor: '#e07b54',
+        tension: .3, pointRadius: 0, fill: false, borderDash: [5, 3] }
+    ]);
+
+    log(`✅ Prediction complete for <b>${model}</b>`);
+  } catch(e) {
+    log(`❌ Network error: ${e.message}`);
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '📈 Predict';
+  }
+}
+
+// ── compare ────────────────────────────────────────────────
+async function compareAll() {
+  try {
+    const res = await fetch('/api/compare');
+    const d   = await res.json();
+
+    if (d.error) { log(`ℹ️ ${d.error}`); return; }
+
+    const names  = Object.keys(d);
+    const colors = ['#4a6fa5','#47b8a4','#e07b54','#c97dbd'];
+
+    makeChart('cmpChart', 'bar', names, [
+      { label: 'MSE', data: names.map(n => d[n].MSE),
+        backgroundColor: colors.slice(0, names.length) },
+      { label: 'MAE', data: names.map(n => d[n].MAE),
+        backgroundColor: colors.slice(0, names.length).map(c => c + '88') }
+    ]);
+
+    log(`📊 Comparison updated: ${names.join(', ')}`);
+  } catch(e) {
+    log(`❌ ${e.message}`);
+  }
+}
+
+// ── init ───────────────────────────────────────────────────
+loadDatasetInfo();
+</script>
+</body>
+</html>
